@@ -1,5 +1,5 @@
 import asyncio
-import aiohttp
+import httpx
 import time
 import hashlib
 import json
@@ -9,34 +9,113 @@ import io
 import logging
 from datetime import datetime
 from pytz import timezone
+from urllib.parse import quote
 
 # Force UTF-8 encoding for console output
 if sys.platform.startswith('win'):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-# Set up logging to file with UTF-8
+# Set up logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(message)s',
     handlers=[
-        #logging.FileHandler('event_log.txt', encoding='utf-8'),
         logging.StreamHandler(sys.stdout)
     ]
 )
 logger = logging.getLogger()
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
-# Class to store account state
+# Biến toàn cục lưu danh sách tỉnh
+provinces = []
+
+# Account state
 class AccountState:
     def __init__(self):
         self.is_first_run = True
         self.account_nick = None
-        self.provinces = []  # Store provinces list
         self.share_count = 0
-        self.max_shares = 999999999  # Default max shares
+        self.max_shares = 999999999
+        self.token = None
 
-async def run_event_flow(session, username, bearer_token, state):
+async def safe_request(client, method, url, **kwargs):
+    """Gửi request có retry"""
+    for attempt in range(5):
+        try:
+            if method == "POST":
+                resp = await client.post(url, **kwargs)
+            else:
+                resp = await client.get(url, **kwargs)
+            resp.raise_for_status()
+            return resp
+        except (httpx.RequestError, httpx.HTTPStatusError) as e:
+            logger.warning(f"Lỗi request {url} (lần {attempt+1}): {e}")
+            await asyncio.sleep(1)
+    return None
+
+async def login(client: httpx.AsyncClient, key, account):
+    """Đăng nhập để lấy token với retry"""
     try:
-        # ========== CONFIGURATION ==========
+        headers = {
+            'origin': 'https://au.vtc.vn',
+            'referer': 'https://au.vtc.vn',
+            'sec-ch-ua': '"Android WebView";v="123", "Not:A-Brand";v="8", "Chromium";v="123"',
+            'sec-ch-ua-mobile': '?1',
+            'sec-ch-ua-platform': '"Android"',
+            'content-type': 'application/x-www-form-urlencoded',
+            'user-agent': 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36'
+        }
+        
+        # Retry POST request
+        resp = await safe_request(client, "POST", 'https://au.vtc.vn/header/Handler/Process.ashx?act=GetCookieAuthString', data=f'info={quote(key)}', headers=headers)
+        if not resp:
+            logger.warning(f"Thất bại lấy CookieAuthString sau 5 lần thử: {account}")
+            return None
+        if resp.status_code == 200:
+            data = resp.json()
+            if data['ResponseStatus'] != 1:
+                logger.warning(f'Đăng nhập thất bại: {account}')
+                return None
+        else:
+            logger.warning(f'Lỗi đăng nhập {account}: HTTP {resp.status_code}')
+            return None
+        
+        # Retry GET request
+        resp = await safe_request(client, "GET", 'https://au.vtc.vn', headers=headers)
+        if not resp:
+            logger.warning(f"Thất bại lấy token sau 5 lần thử: {account}")
+            return None
+        if resp.status_code == 200:
+            data = resp.text
+            try:
+                token_value = data.split('\\"tokenValue\\":\\"')[1].split('\\"')[0]
+                logger.info(f"Tài khoản {account}: Đã đăng nhập thành công")
+                return token_value
+            except IndexError:
+                logger.warning(f'Lỗi phân tích token: {account}')
+                return None
+        else:
+            logger.warning(f'Lỗi lấy token {account}: HTTP {resp.status_code}')
+            return None
+    
+    except Exception as e:
+        logger.error(f'Lỗi đăng nhập {account}: {e}')
+        return None
+
+async def run_event_flow(client: httpx.AsyncClient, username, key, state):
+    global provinces
+    try:
+        # Perform login to get token for this account
+        if state.is_first_run:
+            token = await login(client, key, username)
+            if not token:
+                logger.error(f"Không thể lấy token cho tài khoản {username}")
+                return False
+            state.token = token
+            state.account_nick = username
+            # state.is_first_run = False
+        bearer_token = f"Bearer {state.token}"
+
         maker_code = "BEAuSN19"
         backend_key_sign = "de54c591d457ed1f1769dda0013c9d30f6fc9bbff0b36ea0a425233bd82a1a22"
         login_url = "https://apiwebevent.vtcgame.vn/besnau19home/Event"
@@ -48,70 +127,58 @@ async def run_event_flow(session, username, bearer_token, state):
         def sha256_hex(data):
             return hashlib.sha256(data.encode('utf-8')).hexdigest()
 
-        async def generate_sign(time, func):
-            raw = f"{time}{maker_code}{func}{backend_key_sign}"
+        async def generate_sign(ts, func):
+            raw = f"{ts}{maker_code}{func}{backend_key_sign}"
             return sha256_hex(raw)
 
-        browser_headers = {
+        browser_headers = { 
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
             "Referer": "https://au.vtc.vn/",
-            "Accept-Language": "en-US,en;q=0.9,vi;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9,vi;q=0.8", 
         }
 
         mission_headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/plain, */*",
             "Authorization": bearer_token,
-            "Accept-Language": "en-US,en;q=0.9,vi;q=0.8",
-            "Cache-Control": "no-cache",
-            "Pragma": "no-cache",
-            "Priority": "u=1, i",
-            "Sec-Ch-Ua": "\"Not)A;Brand\";v=\"8\", \"Chromium\";v=\"138\", \"Google Chrome\";v=\"138\"",
-            "Sec-Ch-Ua-Mobile": "?0",
-            "Sec-Ch-Ua-Platform": "\"Windows\"",
-            "Sec-Fetch-Dest": "empty",
-            "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Site": "cross-site",
             "Referer": au_url
         }
 
-        async def send_wish(session, account_nick, state):
-            if not state.provinces:  # Only fetch provinces if list is empty
-                logger.info(f"Tài khoản {account_nick}: Đang lấy danh sách tỉnh...")
-                get_list_time = get_current_timestamp()
-                get_list_sign = await generate_sign(get_list_time, "wish-get-list")
-                list_payload = {
-                    "time": get_list_time,
+        async def send_wish(account_nick):
+            global provinces
+            if not provinces:
+                logger.info(f"Tài khoản {account_nick}: Lấy danh sách tỉnh...")
+                ts = get_current_timestamp()
+                sign = await generate_sign(ts, "wish-get-list")
+                payload = {
+                    "time": ts,
                     "fromIP": "",
-                    "sign": get_list_sign,
+                    "sign": sign,
                     "makerCode": maker_code,
                     "func": "wish-get-list",
                     "data": ""
                 }
-                async with session.post(login_url, json=list_payload, headers=mission_headers) as response:
-                    list_res = await response.json()
-
-                if list_res.get("code") != 1:
+                resp = await safe_request(client, "POST", login_url, json=payload, headers=mission_headers)
+                if not resp:
+                    return None
+                data = resp.json()
+                if data.get("code") != 1:
                     logger.warning(f"Tài khoản {account_nick}: Lấy danh sách tỉnh thất bại.")
                     return None
+                provinces = data["data"]["list"]
+                logger.info(f"Tài khoản {account_nick}: Có {len(provinces)} tỉnh.")
 
-                state.provinces = [p for p in list_res["data"]["list"]]
-                logger.info(f"Tài khoản {account_nick}: Lấy danh sách tỉnh thành công, tổng cộng {len(state.provinces)} tỉnh.")
-
-            if not state.provinces:
-                logger.warning(f"Tài khoản {account_nick}: Không còn tỉnh nào để gửi lời chúc.")
+            if not provinces:
                 return None
 
-            selected = random.choice(state.provinces)
-            logger.info(f"Tài khoản {account_nick}: Đã chọn tỉnh: {selected['ProvinceName']} (ID: {selected['ProvinceID']})")
-            logger.info(f"Tài khoản {account_nick}: Đang gửi lời chúc...")
-            wish_time = get_current_timestamp()
-            wish_sign = await generate_sign(wish_time, "wish-send")
-            wish_payload = {
-                "time": wish_time,
+            selected = random.choice(provinces)
+            ts = get_current_timestamp()
+            sign = await generate_sign(ts, "wish-send")
+            payload = {
+                "time": ts,
                 "fromIP": "",
-                "sign": wish_sign,
+                "sign": sign,
                 "makerCode": maker_code,
                 "func": "wish-send",
                 "data": {
@@ -122,50 +189,31 @@ async def run_event_flow(session, username, bearer_token, state):
                     "Content": "Chúc sự kiện thành công!"
                 }
             }
-            async with session.post(login_url, json=wish_payload, headers=mission_headers) as response:
-                wish_res = await response.json()
-
-            if wish_res.get("mess") != "Gửi lời chúc thành công!":
-                logger.warning(f"Tài khoản {account_nick}: Gửi lời chúc thất bại: {wish_res.get('mess')}")
+            resp = await safe_request(client, "POST", login_url, json=payload, headers=mission_headers)
+            if not resp:
                 return None
+            res = resp.json()
+            if res.get("mess") != "Gửi lời chúc thành công!":
+                return None
+            logger.info(f"Tài khoản {username}: Gửi lời chúc thành công! ({selected['ProvinceName']})")
+            return res["code"], ts
 
-            log_id = wish_res["code"]
-            logger.info(f"Tài khoản {account_nick}: Gửi lời chúc thành công - LogID: {log_id}")
-            return log_id
-
-        async def perform_share(session, log_id, account_nick, username):
-            logger.info(f"Tài khoản {account_nick}: Đang lấy token chia sẻ...")
-            share_time = get_current_timestamp()
-            share_raw = f"{share_time}{maker_code}{au_url}{backend_key_sign}"
+        async def perform_share(log_id, account_nick, username, wish_time):
+            share_raw = f"{wish_time}{maker_code}{au_url}{backend_key_sign}"
             share_sign = sha256_hex(share_raw)
-            share_url = f"{au_url}/bsau/api/generate-share-token?username={username}&time={share_time}&sign={share_sign}"
-            api_headers = {
-                "User-Agent": browser_headers["User-Agent"],
-                "Accept": "application/json",
-                "Referer": au_url,
-            }
-            async with session.get(share_url, headers=api_headers) as response:
-                content_type = response.headers.get('Content-Type', '')
-                response_text = await response.text()
-                if 'application/json' not in content_type:
-                    logger.warning(f"Tài khoản {account_nick}: Nhận được phản hồi không phải JSON: Content-Type={content_type}")
-                    return False
-                try:
-                    share_res = json.loads(response_text)
-                except json.JSONDecodeError:
-                    logger.warning(f"Tài khoản {account_nick}: Không thể phân tích JSON: {response_text}")
-                    return False
-                share_token = share_res.get("token")
-                if not share_token:
-                    logger.warning(f"Tài khoản {account_nick}: Phản hồi token chia sẻ: {share_res}")
-                    return False
-                logger.info(f"Tài khoản {account_nick}: Token chia sẻ: {share_token}")
+            share_url = f"{au_url}/bsau/api/generate-share-token?username={username}&time={wish_time}&sign={share_sign}"
+            resp = await safe_request(client, "GET", share_url, headers=browser_headers)
+            if not resp or 'application/json' not in resp.headers.get('Content-Type', ''):
+                return False
+            token_data = resp.json()
+            share_token = token_data.get("token")
+            if not share_token:
+                return False
 
-            logger.info(f"Tài khoản {account_nick}: Đang gửi wish-share...")
-            final_time = get_current_timestamp()
-            final_sign = await generate_sign(final_time, "wish-share")
-            share_payload = {
-                "time": final_time,
+            ts = get_current_timestamp()
+            final_sign = await generate_sign(ts, "wish-share")
+            payload = {
+                "time": ts,
                 "fromIP": "",
                 "sign": final_sign,
                 "makerCode": maker_code,
@@ -173,112 +221,71 @@ async def run_event_flow(session, username, bearer_token, state):
                 "data": {
                     "LogID": log_id,
                     "key": share_token,
-                    "timestamp": final_time,
+                    "timestamp": ts,
                     "a": "aa"
                 }
             }
-            async with session.post(login_url, json=share_payload, headers=mission_headers) as response:
-                share_send_res = await response.json()
-                if share_send_res.get("code") == 1:
-                    logger.info(f"Tài khoản {account_nick}: Gửi wish-share thành công!")
-                    return True
-                else:
-                    logger.warning(f"Tài khoản {account_nick}: Gửi wish-share thất bại: {share_send_res.get('mess')}")
-                    return False
-
-        if state.is_first_run:
-            logger.info(f"Tài khoản {username}: Đang đăng nhập (lần đầu)...")
-            login_time = get_current_timestamp()
-            login_sign = await generate_sign(login_time, "account-login")
-            login_payload = {
-                "time": login_time,
-                "fromIP": "",
-                "sign": login_sign,
-                "makerCode": maker_code,
-                "func": "account-login",
-                "data": ""
-            }
-            async with session.post(login_url, json=login_payload, headers=mission_headers) as response:
-                login_res = await response.json()
-                if login_res.get("code") != 1:
-                    raise Exception(f"Tài khoản {username}: Đăng nhập thất bại: {login_res.get('mess')}")
-                state.account_nick = login_res['data']['AccountNick']
-                logger.info(f"Tài khoản {username}: Đã đăng nhập: {state.account_nick}")
-            state.is_first_run = False
-        else:
-            logger.info(f"Tài khoản {username}: Sử dụng thông tin đăng nhập trước đó: {state.account_nick}")
-
-        if not state.account_nick:
-            raise Exception(f"Tài khoản {username}: Không có thông tin đăng nhập, vui lòng chạy lại chương trình.")
+            res = await safe_request(client, "POST", login_url, json=payload, headers=mission_headers)
+            if not res:
+                return False
+            logger.info(f"Tài khoản {account_nick}: {res.json()}")
+            return res.json().get("code") == 1
 
         if state.share_count >= state.max_shares:
-            logger.info(f"Tài khoản {username}: Đạt giới hạn share ({state.share_count}/{state.max_shares})")
             return False
 
-        while True:
-            logger.info(f"Tài khoản {username}: Thực hiện share (lần {state.share_count + 1}/{state.max_shares})...")
-            log_id = await send_wish(session, state.account_nick, state)
-            if log_id:
-                if await perform_share(session, log_id, state.account_nick, username):
-                    state.share_count += 1
-                    logger.info(f"Tài khoản {username}: Đã thực hiện share lần thứ {state.share_count}/{state.max_shares}")
-                    return True
-                else:
-                    logger.warning(f"Tài khoản {username}: Hành động share thất bại, thử lại sau 5 giây...")
-                    await asyncio.sleep(5)
-                    continue
-            else:
-                logger.warning(f"Tài khoản {username}: Không lấy được log_id, thử lại sau 5 giây...")
-                await asyncio.sleep(5)
-                continue
+        result = await send_wish(state.account_nick)
+        if not result:
+            return False
+        log_id, wish_time = result
 
-    except Exception as err:
-        logger.error(f"Tài khoản {username}: Lỗi: {str(err)}")
+        if await perform_share(log_id, state.account_nick, username, wish_time):
+            state.share_count += 1
+            return True
+        return False
+
+    except Exception as e:
+        logger.error(f"Lỗi {username}: {e}")
         return False
 
 async def load_accounts():
+    """Tải tài khoản và key từ file account.txt"""
     accounts = []
     try:
-        with open('accounts.txt', 'r', encoding='utf-8') as f:
+        with open('account.txt', 'r', encoding='utf-8') as f:
             for line in f:
-                line = line.strip()
-                if line:
-                    username, token = line.split('|')
-                    accounts.append((username, f"Bearer {token}"))
-        return accounts
-    except Exception as err:
-        logger.error(f"Lỗi khi đọc file accounts.txt: {str(err)}")
-        return []
+                if line.strip():
+                    account, encoded_key = line.strip().split('|')
+                    key = bytes.fromhex(encoded_key).decode('utf-8')
+                    accounts.append((account, key))
+    except Exception as e:
+        logger.error(f"Lỗi đọc file account.txt: {e}")
+    return accounts
 
 async def main():
     accounts = await load_accounts()
     if not accounts:
-        logger.error("Không có tài khoản nào trong file accounts.txt")
+        logger.error("Không có tài khoản nào để xử lý.")
         return
-    async with aiohttp.ClientSession() as session:
-        states = {username: AccountState() for username, _ in accounts}
-        semaphore = asyncio.Semaphore(5)  # Limit to 5 concurrent accounts
-        async def process_account(username, bearer_token, state):
-            async with semaphore:
-                success = await run_event_flow(session, username, bearer_token, state)
-                if success:
-                    logger.info(f"Tài khoản {username}: Share thành công, chờ 5 giây...")
-                    await asyncio.sleep(5)
-                else:
-                    logger.info(f"Tài khoản {username}: Thử lại share cho tài khoản này sau 5 giây...")
-                    await asyncio.sleep(5)
-                return success
+
+    limits = httpx.Limits(max_connections=500, max_keepalive_connections=500)
+    sem = asyncio.Semaphore(2)
+
+    async with httpx.AsyncClient(limits=limits, timeout=5.0, http2=True) as client:
+        states = {u: AccountState() for u, _ in accounts}
+
+        async def process_account(username, key, state):
+            async with sem:
+                ok = await run_event_flow(client, username, key, state)
+                await asyncio.sleep(2)
+                return ok
 
         while True:
-            tasks = [process_account(username, bearer_token, states[username])
-                     for username, bearer_token in accounts]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            logger.info("Hoàn thành một vòng lặp cho tất cả tài khoản, bắt đầu vòng lặp mới...")
-            if all(isinstance(result, Exception) or result is False for result in results):
-                logger.info("Tất cả tài khoản đã đạt giới hạn hoặc gặp lỗi, tạm dừng 60 giây...")
-                await asyncio.sleep(60)
-            else:
-                await asyncio.sleep(1)
+            logger.info("Bắt đầu xử lý từ đầu danh sách tài khoản")
+            tasks = [process_account(u, k, states[u]) for u, k in accounts]
+            await asyncio.gather(*tasks)
+            logger.info("Đã xử lý xong tất cả tài khoản, quay lại từ đầu")
+            await asyncio.sleep(1)
 
 if __name__ == "__main__":
     asyncio.run(main())
