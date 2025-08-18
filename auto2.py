@@ -29,10 +29,9 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 # Biến toàn cục lưu danh sách tỉnh
 provinces = []
 
-# Danh sách proxy hard code
-PROXIES = [
-    "http://103.67.199.104:20051",
-]
+# Proxy hard code duy nhất
+PROXY = "http://160.191.49.251:20051"  # Thay bằng proxy của bạn
+# Nếu không muốn dùng proxy, đặt PROXY = None
 
 # Trạng thái tài khoản
 class AccountState:
@@ -42,10 +41,13 @@ class AccountState:
         self.share_count = 0
         self.max_shares = 999999999
         self.token = None
-        self.proxy = None
+        self.proxy = PROXY
 
 async def check_proxy(client, proxy):
     """Kiểm tra kết nối proxy"""
+    if not proxy:
+        logger.info("Không sử dụng proxy")
+        return True
     for attempt in range(5):
         try:
             resp = await client.get('https://api.ipify.org', timeout=5.0)
@@ -126,11 +128,6 @@ async def login(client: httpx.AsyncClient, key, account, proxy):
 async def run_event_flow(client: httpx.AsyncClient, username, key, state):
     global provinces
     try:
-        # Kiểm tra proxy trước khi xử lý
-        if not await check_proxy(client, state.proxy):
-            logger.error(f"Tài khoản {username}: Proxy {state.proxy} không hoạt động, bỏ qua")
-            return False
-
         # Đăng nhập để lấy token nếu là lần chạy đầu tiên
         if state.is_first_run:
             token = await login(client, key, username, state.proxy)
@@ -295,27 +292,28 @@ async def main():
         logger.error("Không có tài khoản nào để xử lý.")
         return
 
-    proxies = PROXIES
-    if not proxies:
-        logger.warning("Không có proxy nào được cấu hình, chạy không proxy.")
-
-    sem = asyncio.Semaphore(2)
-
-    async def process_account(username, key, state):
-        async with sem:
-            # Tạo client riêng cho từng tài khoản với proxy tương ứng
-            proxy = state.proxy if state.proxy else None
-            async with httpx.AsyncClient(proxies=proxy, limits=httpx.Limits(max_connections=500, max_keepalive_connections=500), timeout=5.0, http2=True) as client:
-                ok = await run_event_flow(client, username, key, state)
-                await asyncio.sleep(2)
-                return ok
+    # Kiểm tra proxy trước khi bắt đầu
+    async with httpx.AsyncClient(proxies=PROXY, limits=httpx.Limits(max_connections=500, max_keepalive_connections=500), timeout=5.0, http2=True) as client:
+        if not await check_proxy(client, PROXY):
+            logger.error("Proxy không hoạt động, dừng chương trình.")
+            return
 
     while True:
         logger.info("Bắt đầu xử lý từ đầu danh sách tài khoản")
-        tasks = [process_account(u, k, states[u]) for u, k in accounts]
-        await asyncio.gather(*tasks)
+        states = {u: AccountState() for u, _ in accounts}  # Khởi tạo states trước vòng lặp
+        for username, key in accounts:
+            state = states[username]
+            proxy = state.proxy if state.proxy else None
+            async with httpx.AsyncClient(proxies=proxy, limits=httpx.Limits(max_connections=500, max_keepalive_connections=500), timeout=5.0, http2=True) as client:
+                logger.info(f"Đang xử lý tài khoản {username}...")
+                ok = await run_event_flow(client, username, key, state)
+                if ok:
+                    logger.info(f"Tài khoản {username}: Hoàn tất xử lý, số lần chia sẻ: {state.share_count} (proxy: {state.proxy})")
+                else:
+                    logger.warning(f"Tài khoản {username}: Xử lý thất bại (proxy: {state.proxy})")
+                await asyncio.sleep(2)  # Độ trễ giữa các tài khoản
         logger.info("Đã xử lý xong tất cả tài khoản, quay lại từ đầu")
-        await asyncio.sleep(1)
+        await asyncio.sleep(1)  # Độ trễ giữa các vòng lặp
 
 if __name__ == "__main__":
     asyncio.run(main())
