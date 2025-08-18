@@ -158,14 +158,9 @@ async def share_event_flow(username: str, bearer_token: str, state: AccountState
                 "Sec-Ch-Ua": '"Not)A;Brand";v="8", "Chromium";v="138", "Google Chrome";v="138"',
                 "Sec-Ch-Ua-Mobile": "?0",
                 "Sec-Ch-Ua-Platform": '"Windows"',
-                "Sec-Fetch-Dest": "empty",
-                "Sec-Fetch-Mode": "cors",
-                "Sec-Fetch-Site": "cross-site",
-                "Referer": AU_URL,
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36"
             }
 
-            async def send_wish(session: ClientSession, retry: int = 0) -> Optional[int]:
+            async def send_wish(session: ClientSession, retry: int = 0) -> Optional[Tuple[int, int]]:
                 if retry >= MAX_SESSION_RETRIES:
                     logger.warning(f"{username}: Không gửi được lời chúc sau {MAX_SESSION_RETRIES} lần thử")
                     return None
@@ -243,7 +238,7 @@ async def share_event_flow(username: str, bearer_token: str, state: AccountState
                     await asyncio.sleep(RETRY_DELAY)
                     return await send_wish(session, retry + 1)
 
-            async def perform_share(session: ClientSession, wish_time, log_id: int, retry: int = 0) -> bool:
+            async def perform_share(session: ClientSession, wish_time: int, log_id: int, retry: int = 0) -> bool:
                 if retry >= MAX_SESSION_RETRIES:
                     logger.warning(f"{username}: Không chia sẻ được sau {MAX_SESSION_RETRIES} lần thử")
                     return False
@@ -312,8 +307,9 @@ async def share_event_flow(username: str, bearer_token: str, state: AccountState
 
             state.account_nick = username
             logger.info(f"{username}: Thực hiện chia sẻ lần {state.share_count + 1}")
-            log_id, wish_time = await send_wish(session)
-            if log_id:
+            result = await send_wish(session)
+            if result:
+                log_id, wish_time = result
                 if await perform_share(session, wish_time, log_id):
                     state.share_count += 1
                     logger.info(f"{username}: Hoàn thành chia sẻ lần {state.share_count}")
@@ -344,19 +340,26 @@ async def process_account(session: ClientSession, username: str, key: str, state
         logger.info(f"Bắt đầu xử lý tài khoản: {username}")
         try:
             key_decoded = bytes.fromhex(key).decode('utf-8')
-            token = await get_token(key_decoded, username)
-            if not token:
-                logger.error(f"{username}: Bỏ qua do không lấy được token")
-                return
+            while not token:
+                attempt += 1
+                try:
+                    token = await get_token(key_decoded, username)
+                    if token:
+                        logger.info(f"{username}: Lấy token thành công (lần {attempt})")
+                        break
+                    else:
+                        logger.warning(f"{username}: Token rỗng, thử lại (lần {attempt})")
+                except Exception as e:
+                    logger.warning(f"{username}: Lỗi khi lấy token (lần {attempt}): {str(e)}")
+                
+                await asyncio.sleep(1)  # tránh spam quá nhanh
 
-            while True:  # Vòng lặp vô hạn để chia sẻ liên tục
-                success = await share_event_flow(username, token, state)
-                if success:
-                    logger.info(f"{username}: Chia sẻ thành công, chờ 3 giây")
-                    await asyncio.sleep(2)
-                else:
-                    logger.warning(f"{username}: Chia sẻ thất bại, thử lại sau 5 giây")
-                    await asyncio.sleep(2)
+            # Thực hiện một lần chia sẻ duy nhất cho mỗi tài khoản
+            success = await share_event_flow(username, token, state)
+            if success:
+                logger.info(f"{username}: Chia sẻ thành công, hoàn thành lượt xử lý")
+            else:
+                logger.warning(f"{username}: Chia sẻ thất bại")
 
         except ValueError as e:
             logger.error(f"{username}: Định dạng khóa không hợp lệ: {str(e)}")
@@ -386,6 +389,7 @@ async def main():
                 ]
                 await asyncio.gather(*tasks)
                 logger.info(f"Hoàn thành nhóm tài khoản từ {i+1} đến {i+len(batch)}")
+                await asyncio.sleep(3)  # Chờ 3 giây giữa các nhóm
 
             logger.info("Đã xử lý xong tất cả tài khoản, bắt đầu lại sau 10 giây")
             await asyncio.sleep(10)  # Chờ trước khi chạy lại toàn bộ tài khoản
