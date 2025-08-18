@@ -192,7 +192,7 @@ async def share_event_flow(username: str, bearer_token: str, state: AccountState
                     try:
                         async with session.post(API_URL, json=list_payload, headers=mission_headers, ssl=True) as response:
                             list_res = await response.json()
-                        await asyncio.sleep(0.5)
+                        await asyncio.sleep(1)
                         if list_res.get("code") != 1:
                             logger.warning(f"{username}: Không lấy được danh sách tỉnh: {list_res.get('mess', 'Lỗi không xác định')}")
                             return None
@@ -234,7 +234,7 @@ async def share_event_flow(username: str, bearer_token: str, state: AccountState
                 try:
                     async with session.post(API_URL, json=wish_payload, headers=mission_headers, ssl=True) as response:
                         wish_res = await response.json()
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(1)
                     if wish_res.get("mess") != "Gửi lời chúc thành công!":
                         logger.warning(f"{username}: Không gửi được lời chúc: {wish_res.get('mess', 'Lỗi không xác định')}")
                         return None
@@ -271,14 +271,14 @@ async def share_event_flow(username: str, bearer_token: str, state: AccountState
                         if 'application/json' not in content_type:
                             logger.warning(f"{username}: Phản hồi không phải JSON từ API token chia sẻ: Content-Type={content_type}")
                             await asyncio.sleep(RETRY_DELAY)
-                            return await perform_share(session, log_id, retry + 1)
+                            return await perform_share(session, wish_time, log_id, retry + 1)
                         share_res = await response.json()
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(1)
                     share_token = share_res.get("token")
                     if not share_token:
                         logger.warning(f"{username}: Không nhận được token chia sẻ: {share_res}")
                         await asyncio.sleep(RETRY_DELAY)
-                        return await perform_share(session, log_id, retry + 1)
+                        return await perform_share(session, wish_time, log_id, retry + 1)
                     logger.info(f"{username}: Lấy được token chia sẻ: {share_token}")
 
                     final_time = get_current_timestamp()
@@ -292,31 +292,31 @@ async def share_event_flow(username: str, bearer_token: str, state: AccountState
                         "data": {
                             "LogID": log_id,
                             "key": share_token,
-                            "timestamp": final_time,
+                            "timestamp": share_time,
                             "a": "aa"
                         }
                     }
                     async with session.post(API_URL, json=share_payload, headers=mission_headers, ssl=True) as response:
                         share_send_res = await response.json()
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(1)
                     if share_send_res.get("code") == 1:
                         logger.info(f"{username}: Chia sẻ thành công")
                         return True
                     elif share_send_res.get("mess") == "Chữ ký không hợp lệ":
                         logger.warning(f"{username}: Chữ ký không hợp lệ (thử lần {retry + 1}/{MAX_SESSION_RETRIES})")
                         await asyncio.sleep(RETRY_DELAY)
-                        return await perform_share(session, log_id, retry + 1)
+                        return await perform_share(session, wish_time, log_id, retry + 1)
                     else:
                         logger.warning(f"{username}: Chia sẻ thất bại: {share_send_res.get('mess', 'Lỗi không xác định')}")
                         return False
                 except (ClientConnectionError, ServerDisconnectedError, ProxyError) as e:
                     logger.warning(f"{username}: Lỗi mạng khi chia sẻ: {str(e)} (thử lần {retry + 1}/{MAX_SESSION_RETRIES})")
                     await asyncio.sleep(RETRY_DELAY)
-                    return await perform_share(session, log_id, retry + 1)
+                    return await perform_share(session, wish_time, log_id, retry + 1)
                 except Exception as e:
                     logger.error(f"{username}: Lỗi không mong muốn khi chia sẻ: {str(e)} (thử lần {retry + 1}/{MAX_SESSION_RETRIES})")
                     await asyncio.sleep(RETRY_DELAY)
-                    return await perform_share(session, log_id, retry + 1)
+                    return await perform_share(session, wish_time, log_id, retry + 1)
 
             state.account_nick = username
             if state.share_count >= MAX_SHARES:
