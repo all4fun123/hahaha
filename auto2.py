@@ -32,7 +32,10 @@ provinces = []
 # Proxy hard code duy nhất
 PROXY = "http://160.191.49.251:20051"  # Thay bằng proxy của bạn
 # Nếu không muốn dùng proxy, đặt PROXY = None
-
+proxies = {
+        "http://": PROXY,
+        "https://": PROXY"
+    }
 # Trạng thái tài khoản
 class AccountState:
     def __init__(self):
@@ -291,12 +294,6 @@ async def main():
     if not accounts:
         logger.error("Không có tài khoản nào để xử lý.")
         return
-
-    # Kiểm tra proxy trước khi bắt đầu
-    async with httpx.AsyncClient(proxies=PROXY, limits=httpx.Limits(max_connections=500, max_keepalive_connections=500), timeout=5.0, http2=True) as client:
-        if not await check_proxy(client, PROXY):
-            logger.error("Proxy không hoạt động, dừng chương trình.")
-            return
 
     while True:
         logger.info("Bắt đầu xử lý từ đầu danh sách tài khoản")
