@@ -14,7 +14,7 @@ from typing import Optional, List, Tuple
 
 # Configuration (replace with environment variables or config file in production)
 CONFIGPROXY = 'http://103.67.199.104:20051/'  # Proxy URL, e.g., socks5://user:pass@host:port
-FILE_NAME = 'accounts.txt'
+FILE_NAME = 'account.txt'
 TIMEOUT = 10  # seconds
 MAX_TOKEN_RETRIES = 20
 MAX_SESSION_RETRIES = 20
