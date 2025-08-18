@@ -1,3 +1,4 @@
+```python
 import asyncio
 import aiohttp
 import time
@@ -12,20 +13,20 @@ from urllib.parse import quote
 import os
 from typing import Optional, List, Tuple
 
-# Configuration (replace with environment variables or config file in production)
-CONFIGPROXY = 'http://103.67.199.104:20051/'  # Proxy URL, e.g., socks5://user:pass@host:port
+# Cấu hình (nên thay bằng biến môi trường hoặc file cấu hình trong môi trường thực tế)
+CONFIGPROXY = 'http://103.67.199.104:20051/'  # URL proxy, ví dụ: socks5://user:pass@host:port
 FILE_NAME = 'account.txt'
-TIMEOUT = 10  # seconds
+TIMEOUT = 10  # giây
 MAX_TOKEN_RETRIES = 20
 MAX_SESSION_RETRIES = 20
-RETRY_DELAY = 1  # seconds
+RETRY_DELAY = 1  # giây
 API_URL = "https://apiwebevent.vtcgame.vn/besnau19/Event"
 MAKER_CODE = "BEAuSN19"
 BACKEND_KEY_SIGN = "de54c591d457ed1f1769dda0013c9d30f6fc9bbff0b36ea0a425233bd82a1a22"
 AU_URL = "https://au.vtc.vn"
-MAX_SHARES = 30  # Maximum shares per account
+MAX_SHARES = 30  # Số lần chia sẻ tối đa mỗi tài khoản
 
-# Logging setup
+# Thiết lập logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -43,9 +44,9 @@ class AccountState:
         self.provinces: List[dict] = []
 
 async def get_token(key: str, account: str, retry: int = 0) -> Optional[str]:
-    """Fetch authentication token for the given account."""
+    """Lấy token xác thực cho tài khoản."""
     if retry >= MAX_TOKEN_RETRIES:
-        logger.error(f"{account}: Failed to get token after {MAX_TOKEN_RETRIES} retries")
+        logger.error(f"{account}: Không lấy được token sau {MAX_TOKEN_RETRIES} lần thử")
         return None
 
     headers = {
@@ -63,93 +64,93 @@ async def get_token(key: str, account: str, retry: int = 0) -> Optional[str]:
 
     async with ClientSession(headers=headers, timeout=ClientTimeout(total=TIMEOUT)) as session:
         try:
-            # Login request
+            # Yêu cầu đăng nhập
             async with session.post(
                 'https://au.vtc.vn/header/Handler/Process.ashx?act=GetCookieAuthString',
                 data=f'info={quote(key)}',
                 ssl=True
             ) as response:
                 if response.status != 200:
-                    logger.warning(f"{account}: Login failed, status code: {response.status} (retry {retry + 1}/{MAX_TOKEN_RETRIES})")
+                    logger.warning(f"{account}: Đăng nhập thất bại, mã trạng thái: {response.status} (thử lần {retry + 1}/{MAX_TOKEN_RETRIES})")
                     await asyncio.sleep(RETRY_DELAY)
                     return await get_token(key, account, retry + 1)
                 try:
                     data = await response.json()
                 except aiohttp.ContentTypeError:
-                    logger.warning(f"{account}: Invalid JSON response during login (retry {retry + 1}/{MAX_TOKEN_RETRIES})")
+                    logger.warning(f"{account}: Phản hồi JSON không hợp lệ khi đăng nhập (thử lần {retry + 1}/{MAX_TOKEN_RETRIES})")
                     await asyncio.sleep(RETRY_DELAY)
                     return await get_token(key, account, retry + 1)
                 if data.get('ResponseStatus') != 1:
-                    logger.warning(f"{account}: Login failed: {data.get('ResponseMessage', 'No message')} (retry {retry + 1}/{MAX_TOKEN_RETRIES})")
+                    logger.warning(f"{account}: Đăng nhập thất bại: {data.get('ResponseMessage', 'Không có thông báo')} (thử lần {retry + 1}/{MAX_TOKEN_RETRIES})")
                     await asyncio.sleep(RETRY_DELAY)
                     return await get_token(key, account, retry + 1)
-                logger.info(f"{account}: Login successful")
+                logger.info(f"{account}: Đăng nhập thành công")
 
-            # Fetch token from auparty page
+            # Lấy token từ trang auparty
             async with session.get('https://au.vtc.vn/auparty', ssl=True) as response:
                 if response.status != 200:
-                    logger.warning(f"{account}: Failed to access auparty page, status: {response.status} (retry {retry + 1}/{MAX_TOKEN_RETRIES})")
+                    logger.warning(f"{account}: Không truy cập được trang auparty, mã trạng thái: {response.status} (thử lần {retry + 1}/{MAX_TOKEN_RETRIES})")
                     await asyncio.sleep(RETRY_DELAY)
                     return await get_token(key, account, retry + 1)
                 data = await response.text()
                 match = re.search(r'\\"tokenValue\\":\\"(.*?)\\"', data)
                 if match:
                     token_value = match.group(1)
-                    logger.info(f"{account}: Successfully extracted token")
+                    logger.info(f"{account}: Lấy token thành công")
                     return token_value
                 else:
-                    logger.warning(f"{account}: Could not extract tokenValue (retry {retry + 1}/{MAX_TOKEN_RETRIES})")
+                    logger.warning(f"{account}: Không trích xuất được tokenValue (thử lần {retry + 1}/{MAX_TOKEN_RETRIES})")
                     await asyncio.sleep(RETRY_DELAY)
                     return await get_token(key, account, retry + 1)
 
         except (ClientConnectionError, ServerDisconnectedError) as e:
-            logger.warning(f"{account}: Network error while fetching token: {str(e)} (retry {retry + 1}/{MAX_TOKEN_RETRIES})")
+            logger.warning(f"{account}: Lỗi mạng khi lấy token: {str(e)} (thử lần {retry + 1}/{MAX_TOKEN_RETRIES})")
             await asyncio.sleep(RETRY_DELAY)
             return await get_token(key, account, retry + 1)
         except Exception as e:
-            logger.error(f"{account}: Unexpected error while fetching token: {str(e)} (retry {retry + 1}/{MAX_TOKEN_RETRIES})")
+            logger.error(f"{account}: Lỗi không mong muốn khi lấy token: {str(e)} (thử lần {retry + 1}/{MAX_TOKEN_RETRIES})")
             await asyncio.sleep(RETRY_DELAY)
             return await get_token(key, account, retry + 1)
 
 async def share_event_flow(username: str, bearer_token: str, state: AccountState) -> bool:
-    """Perform the share event flow for the account."""
+    """Thực hiện quy trình chia sẻ sự kiện cho tài khoản."""
     connector = ProxyConnector.from_url(CONFIGPROXY) if CONFIGPROXY else None
     async with ClientSession(connector=connector, timeout=ClientTimeout(total=TIMEOUT)) as session:
         try:
-            # Check proxy if configured
+            # Kiểm tra proxy nếu được cấu hình
             if CONFIGPROXY:
                 for retry in range(3):
                     try:
                         async with session.get('http://ip-api.com/json', ssl=True, timeout=ClientTimeout(total=TIMEOUT)) as response:
                             if response.status == 200:
                                 data = await response.json()
-                                logger.info(f"Proxy working: IP {data.get('query', 'unknown')}, Country: {data.get('country', 'unknown')}")
+                                logger.info(f"Proxy hoạt động: IP {data.get('query', 'không xác định')}, Quốc gia: {data.get('country', 'không xác định')}")
                                 break
                             else:
-                                logger.warning(f"{username}: Proxy check failed, status: {response.status} (retry {retry + 1}/3)")
+                                logger.warning(f"{username}: Kiểm tra proxy thất bại, mã trạng thái: {response.status} (thử lần {retry + 1}/3)")
                                 if retry < 2:
                                     await asyncio.sleep(RETRY_DELAY)
                                 continue
                     except (ClientConnectionError, ServerDisconnectedError, ProxyError) as e:
-                        logger.warning(f"{username}: Proxy network error: {str(e)} (retry {retry + 1}/3)")
+                        logger.warning(f"{username}: Lỗi mạng proxy: {str(e)} (thử lần {retry + 1}/3)")
                         if retry < 2:
                             await asyncio.sleep(RETRY_DELAY)
                         continue
                     except Exception as e:
-                        logger.error(f"{username}: Unexpected error during proxy check: {str(e)} (retry {retry + 1}/3)")
+                        logger.error(f"{username}: Lỗi không mong muốn khi kiểm tra proxy: {str(e)} (thử lần {retry + 1}/3)")
                         if retry < 2:
                             await asyncio.sleep(RETRY_DELAY)
                         continue
                 else:
-                    logger.error(f"{username}: Proxy unusable after 3 retries")
+                    logger.error(f"{username}: Proxy không sử dụng được sau 3 lần thử")
                     return False
 
             def get_current_timestamp() -> int:
-                """Get current timestamp in seconds."""
+                """Lấy thời gian hiện tại theo giây."""
                 return int(time.time())
 
             async def generate_sign(time: int, func: str) -> str:
-                """Generate SHA256 signature for API requests."""
+                """Tạo chữ ký SHA256 cho yêu cầu API."""
                 raw = f"{time}{MAKER_CODE}{func}{BACKEND_KEY_SIGN}"
                 return hashlib.sha256(raw.encode('utf-8')).hexdigest()
 
@@ -167,17 +168,18 @@ async def share_event_flow(username: str, bearer_token: str, state: AccountState
                 "Sec-Fetch-Dest": "empty",
                 "Sec-Fetch-Mode": "cors",
                 "Sec-Fetch-Site": "cross-site",
-                "Referer": AU_URL
+                "Referer": AU_URL,
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36"
             }
 
             async def send_wish(session: ClientSession, retry: int = 0) -> Optional[int]:
-                """Send a wish to get a LogID."""
+                """Gửi lời chúc để lấy LogID."""
                 if retry >= MAX_SESSION_RETRIES:
-                    logger.warning(f"{username}: Failed to send wish after {MAX_SESSION_RETRIES} retries")
+                    logger.warning(f"{username}: Không gửi được lời chúc sau {MAX_SESSION_RETRIES} lần thử")
                     return None
 
                 if not state.provinces:
-                    logger.info(f"{username}: Fetching province list...")
+                    logger.info(f"{username}: Đang lấy danh sách tỉnh...")
                     get_list_time = get_current_timestamp()
                     get_list_sign = await generate_sign(get_list_time, "wish-get-list")
                     list_payload = {
@@ -193,26 +195,26 @@ async def share_event_flow(username: str, bearer_token: str, state: AccountState
                             list_res = await response.json()
                         await asyncio.sleep(0.5)
                         if list_res.get("code") != 1:
-                            logger.warning(f"{username}: Failed to fetch province list: {list_res.get('mess', 'Unknown error')}")
+                            logger.warning(f"{username}: Không lấy được danh sách tỉnh: {list_res.get('mess', 'Lỗi không xác định')}")
                             return None
                         state.provinces = [p for p in list_res["data"]["list"]]
-                        logger.info(f"{username}: Fetched {len(state.provinces)} provinces")
+                        logger.info(f"{username}: Lấy được {len(state.provinces)} tỉnh")
                     except (ClientConnectionError, ServerDisconnectedError, ProxyError) as e:
-                        logger.warning(f"{username}: Network error fetching province list: {str(e)} (retry {retry + 1}/{MAX_SESSION_RETRIES})")
+                        logger.warning(f"{username}: Lỗi mạng khi lấy danh sách tỉnh: {str(e)} (thử lần {retry + 1}/{MAX_SESSION_RETRIES})")
                         await asyncio.sleep(RETRY_DELAY)
                         return await send_wish(session, retry + 1)
                     except Exception as e:
-                        logger.error(f"{username}: Unexpected error fetching province list: {str(e)} (retry {retry + 1}/{MAX_SESSION_RETRIES})")
+                        logger.error(f"{username}: Lỗi không mong muốn khi lấy danh sách tỉnh: {str(e)} (thử lần {retry + 1}/{MAX_SESSION_RETRIES})")
                         await asyncio.sleep(RETRY_DELAY)
                         return await send_wish(session, retry + 1)
 
                 if not state.provinces:
-                    logger.warning(f"{username}: No provinces available to send wish")
+                    logger.warning(f"{username}: Không có tỉnh nào để gửi lời chúc")
                     return None
 
                 import random
                 selected = random.choice(state.provinces)
-                logger.info(f"{username}: Selected province: {selected['ProvinceName']} (ID: {selected['ProvinceID']})")
+                logger.info(f"{username}: Chọn tỉnh: {selected['ProvinceName']} (ID: {selected['ProvinceID']})")
 
                 wish_time = get_current_timestamp()
                 wish_sign = await generate_sign(wish_time, "wish-send")
@@ -235,24 +237,24 @@ async def share_event_flow(username: str, bearer_token: str, state: AccountState
                         wish_res = await response.json()
                     await asyncio.sleep(0.5)
                     if wish_res.get("mess") != "Gửi lời chúc thành công!":
-                        logger.warning(f"{username}: Failed to send wish: {wish_res.get('mess', 'Unknown error')}")
+                        logger.warning(f"{username}: Không gửi được lời chúc: {wish_res.get('mess', 'Lỗi không xác định')}")
                         return None
                     log_id = wish_res.get("code")
-                    logger.info(f"{username}: Wish sent successfully, LogID: {log_id}")
+                    logger.info(f"{username}: Gửi lời chúc thành công, LogID: {log_id}")
                     return log_id
                 except (ClientConnectionError, ServerDisconnectedError, ProxyError) as e:
-                    logger.warning(f"{username}: Network error sending wish: {str(e)} (retry {retry + 1}/{MAX_SESSION_RETRIES})")
+                    logger.warning(f"{username}: Lỗi mạng khi gửi lời chúc: {str(e)} (thử lần {retry + 1}/{MAX_SESSION_RETRIES})")
                     await asyncio.sleep(RETRY_DELAY)
                     return await send_wish(session, retry + 1)
                 except Exception as e:
-                    logger.error(f"{username}: Unexpected error sending wish: {str(e)} (retry {retry + 1}/{MAX_SESSION_RETRIES})")
+                    logger.error(f"{username}: Lỗi không mong muốn khi gửi lời chúc: {str(e)} (thử lần {retry + 1}/{MAX_SESSION_RETRIES})")
                     await asyncio.sleep(RETRY_DELAY)
                     return await send_wish(session, retry + 1)
 
             async def perform_share(session: ClientSession, log_id: int, retry: int = 0) -> bool:
-                """Perform the share action using the LogID."""
+                """Thực hiện hành động chia sẻ bằng LogID."""
                 if retry >= MAX_SESSION_RETRIES:
-                    logger.warning(f"{username}: Failed to perform share after {MAX_SESSION_RETRIES} retries")
+                    logger.warning(f"{username}: Không chia sẻ được sau {MAX_SESSION_RETRIES} lần thử")
                     return False
 
                 share_time = get_current_timestamp()
@@ -268,17 +270,17 @@ async def share_event_flow(username: str, bearer_token: str, state: AccountState
                     async with session.get(share_url, headers=api_headers, ssl=True) as response:
                         content_type = response.headers.get('Content-Type', '')
                         if 'application/json' not in content_type:
-                            logger.warning(f"{username}: Non-JSON response from share token API: Content-Type={content_type}")
+                            logger.warning(f"{username}: Phản hồi không phải JSON từ API token chia sẻ: Content-Type={content_type}")
                             await asyncio.sleep(RETRY_DELAY)
                             return await perform_share(session, log_id, retry + 1)
                         share_res = await response.json()
                     await asyncio.sleep(0.5)
                     share_token = share_res.get("token")
                     if not share_token:
-                        logger.warning(f"{username}: No share token received: {share_res}")
+                        logger.warning(f"{username}: Không nhận được token chia sẻ: {share_res}")
                         await asyncio.sleep(RETRY_DELAY)
                         return await perform_share(session, log_id, retry + 1)
-                    logger.info(f"{username}: Retrieved share token: {share_token}")
+                    logger.info(f"{username}: Lấy được token chia sẻ: {share_token}")
 
                     final_time = get_current_timestamp()
                     final_sign = await generate_sign(final_time, "wish-share")
@@ -299,107 +301,108 @@ async def share_event_flow(username: str, bearer_token: str, state: AccountState
                         share_send_res = await response.json()
                     await asyncio.sleep(0.5)
                     if share_send_res.get("code") == 1:
-                        logger.info(f"{username}: Share successful")
+                        logger.info(f"{username}: Chia sẻ thành công")
                         return True
                     elif share_send_res.get("mess") == "Chữ ký không hợp lệ":
-                        logger.warning(f"{username}: Invalid signature (retry {retry + 1}/{MAX_SESSION_RETRIES})")
+                        logger.warning(f"{username}: Chữ ký không hợp lệ (thử lần {retry + 1}/{MAX_SESSION_RETRIES})")
                         await asyncio.sleep(RETRY_DELAY)
                         return await perform_share(session, log_id, retry + 1)
                     else:
-                        logger.warning(f"{username}: Share failed: {share_send_res.get('mess', 'Unknown error')}")
+                        logger.warning(f"{username}: Chia sẻ thất bại: {share_send_res.get('mess', 'Lỗi không xác định')}")
                         return False
                 except (ClientConnectionError, ServerDisconnectedError, ProxyError) as e:
-                    logger.warning(f"{username}: Network error during share: {str(e)} (retry {retry + 1}/{MAX_SESSION_RETRIES})")
+                    logger.warning(f"{username}: Lỗi mạng khi chia sẻ: {str(e)} (thử lần {retry + 1}/{MAX_SESSION_RETRIES})")
                     await asyncio.sleep(RETRY_DELAY)
                     return await perform_share(session, log_id, retry + 1)
                 except Exception as e:
-                    logger.error(f"{username}: Unexpected error during share: {str(e)} (retry {retry + 1}/{MAX_SESSION_RETRIES})")
+                    logger.error(f"{username}: Lỗi không mong muốn khi chia sẻ: {str(e)} (thử lần {retry + 1}/{MAX_SESSION_RETRIES})")
                     await asyncio.sleep(RETRY_DELAY)
                     return await perform_share(session, log_id, retry + 1)
 
             state.account_nick = username
             if state.share_count >= MAX_SHARES:
-                logger.info(f"{username}: Reached share limit ({state.share_count}/{MAX_SHARES})")
+                logger.info(f"{username}: Đã đạt giới hạn chia sẻ ({state.share_count}/{MAX_SHARES})")
                 return False
 
-            logger.info(f"{username}: Performing share {state.share_count + 1}/{MAX_SHARES}")
+            logger.info(f"{username}: Thực hiện chia sẻ lần {state.share_count + 1}/{MAX_SHARES}")
             log_id = await send_wish(session)
             if log_id:
                 if await perform_share(session, log_id):
                     state.share_count += 1
-                    logger.info(f"{username}: Completed share {state.share_count}/{MAX_SHARES}")
+                    logger.info(f"{username}: Hoàn thành chia sẻ lần {state.share_count}/{MAX_SHARES}")
                     return True
                 else:
-                    logger.warning(f"{username}: Share action failed")
+                    logger.warning(f"{username}: Hành động chia sẻ thất bại")
                     return False
             else:
-                logger.warning(f"{username}: Failed to obtain LogID for sharing")
+                logger.warning(f"{username}: Không lấy được LogID để chia sẻ")
                 return False
 
         except Exception as err:
-            logger.error(f"{username}: Unexpected error in share event flow: {str(err)}")
+            logger.error(f"{username}: Lỗi không mong muốn trong quy trình chia sẻ: {str(err)}")
             return False
 
 async def load_accounts() -> List[Tuple[str, str]]:
-    """Load accounts from file."""
+    """Tải danh sách tài khoản từ file."""
     try:
         with open(FILE_NAME, 'r', encoding='utf-8') as f:
             return [line.strip().split('|') for line in f if line.strip()]
     except Exception as err:
-        logger.error(f"Error reading accounts file: {str(err)}")
+        logger.error(f"Lỗi khi đọc file tài khoản: {str(err)}")
         return []
 
 async def process_account(session: ClientSession, username: str, key: str, state: AccountState, semaphore: asyncio.Semaphore) -> None:
-    """Process a single account."""
+    """Xử lý một tài khoản."""
     async with semaphore:
-        logger.info(f"Starting processing for account: {username}")
+        logger.info(f"Bắt đầu xử lý tài khoản: {username}")
         try:
             key_decoded = bytes.fromhex(key).decode('utf-8')
             token = await get_token(key_decoded, username)
             if not token:
-                logger.error(f"{username}: Skipping due to token retrieval failure")
+                logger.error(f"{username}: Bỏ qua do không lấy được token")
                 return
 
             while state.share_count < MAX_SHARES:
                 success = await share_event_flow(username, token, state)
                 if success:
-                    logger.info(f"{username}: Share successful, waiting 3 seconds")
-                    await asyncio.sleep(3)
+                    logger.info(f"{username}: Chia sẻ thành công, chờ 3 giây")
+                    await asyncio.sleep(1)
                 else:
-                    logger.warning(f"{username}: Share failed, retrying after 5 seconds")
-                    await asyncio.sleep(5)
-            logger.info(f"{username}: Completed {state.share_count}/{MAX_SHARES} shares")
+                    logger.warning(f"{username}: Chia sẻ thất bại, thử lại sau 5 giây")
+                    await asyncio.sleep(1)
+            logger.info(f"{username}: Hoàn thành {state.share_count}/{MAX_SHARES} lần chia sẻ")
 
         except ValueError as e:
-            logger.error(f"{username}: Invalid key format: {str(e)}")
+            logger.error(f"{username}: Định dạng khóa không hợp lệ: {str(e)}")
         except Exception as e:
-            logger.error(f"{username}: Error processing account: {str(e)}")
-        logger.info(f"Finished processing account: {username}")
+            logger.error(f"{username}: Lỗi khi xử lý tài khoản: {str(e)}")
+        logger.info(f"Hoàn thành xử lý tài khoản: {username}")
 
 async def main():
-    """Main function to process all accounts."""
+    """Hàm chính để xử lý tất cả tài khoản."""
     accounts = await load_accounts()
     if not accounts:
-        logger.error("No valid accounts found in accounts.txt")
+        logger.error("Không tìm thấy tài khoản hợp lệ trong file accounts.txt")
         return
 
     connector = ProxyConnector.from_url(CONFIGPROXY) if CONFIGPROXY else None
     async with ClientSession(connector=connector, timeout=ClientTimeout(total=TIMEOUT)) as session:
         states = {username: AccountState() for username, _ in accounts}
-        semaphore = asyncio.Semaphore(2)  # Limit to 5 concurrent accounts
+        semaphore = asyncio.Semaphore(2)  # Giới hạn 5 tài khoản đồng thời
 
-        # Process accounts in batches of 5
+        # Xử lý tài khoản theo nhóm 5
         for i in range(0, len(accounts), 2):
             batch = accounts[i:i+2]
-            logger.info(f"Processing account batch {i+1} to {i+len(batch)}")
+            logger.info(f"Xử lý nhóm tài khoản từ {i+1} đến {i+len(batch)}")
             tasks = [
                 process_account(session, username, key, states[username], semaphore)
                 for username, key in batch
             ]
             await asyncio.gather(*tasks)
-            logger.info(f"Completed account batch {i+1} to {i+len(batch)}")
+            logger.info(f"Hoàn thành nhóm tài khoản từ {i+1} đến {i+len(batch)}")
 
-        logger.info("All accounts processed")
+        logger.info("Đã xử lý xong tất cả tài khoản")
 
 if __name__ == "__main__":
     asyncio.run(main())
+```
