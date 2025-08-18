@@ -310,12 +310,6 @@ async def main():
                 await asyncio.sleep(2)
                 return ok
 
-    # Gán proxy cho từng tài khoản
-    states = {u: AccountState() for u, _ in accounts}
-    for i, (username, _) in enumerate(accounts):
-        states[username].proxy = proxies[i % len(proxies)] if proxies else None
-        logger.info(f"Tài khoản {username}: Sử dụng proxy {states[username].proxy}")
-
     while True:
         logger.info("Bắt đầu xử lý từ đầu danh sách tài khoản")
         tasks = [process_account(u, k, states[u]) for u, k in accounts]
