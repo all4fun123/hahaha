@@ -12,7 +12,7 @@ from pytz import timezone
 from urllib.parse import quote
 
 
-CONFIGPROXY = "http://103.67.199.104"
+CONFIGPROXY = "http://103.67.199.104:20051"
 # Force UTF-8 encoding for console output
 if sys.platform.startswith('win'):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
