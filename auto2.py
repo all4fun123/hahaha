@@ -335,37 +335,55 @@ async def load_accounts() -> List[Tuple[str, str]]:
         return []
 
 async def process_account(session: ClientSession, username: str, key: str, state: AccountState, semaphore: asyncio.Semaphore) -> None:
-    """Xử lý một tài khoản."""
+    """Xử lý một tài khoản, luôn retry cho đến khi thành công."""
     async with semaphore:
         logger.info(f"Bắt đầu xử lý tài khoản: {username}")
-        try:
-            key_decoded = bytes.fromhex(key).decode('utf-8')
-            while not token:
-                attempt += 1
-                try:
-                    token = await get_token(key_decoded, username)
-                    if token:
-                        logger.info(f"{username}: Lấy token thành công (lần {attempt})")
-                        break
-                    else:
-                        logger.warning(f"{username}: Token rỗng, thử lại (lần {attempt})")
-                except Exception as e:
-                    logger.warning(f"{username}: Lỗi khi lấy token (lần {attempt}): {str(e)}")
-                
-                await asyncio.sleep(1)  # tránh spam quá nhanh
 
-            # Thực hiện một lần chia sẻ duy nhất cho mỗi tài khoản
-            success = await share_event_flow(username, token, state)
-            if success:
-                logger.info(f"{username}: Chia sẻ thành công, hoàn thành lượt xử lý")
-            else:
-                logger.warning(f"{username}: Chia sẻ thất bại")
+        key_decoded = None
+        token = None
+        success = False
 
-        except ValueError as e:
-            logger.error(f"{username}: Định dạng khóa không hợp lệ: {str(e)}")
-        except Exception as e:
-            logger.error(f"{username}: Lỗi khi xử lý tài khoản: {str(e)}")
+        # Decode key (retry nếu lỗi ValueError)
+        while key_decoded is None:
+            try:
+                key_decoded = bytes.fromhex(key).decode('utf-8')
+                logger.info(f"{username}: Giải mã key thành công")
+            except ValueError as e:
+                logger.error(f"{username}: Định dạng khóa không hợp lệ: {str(e)} → thử lại")
+                await asyncio.sleep(1)
+
+        # Lấy token (retry vô hạn đến khi có token)
+        attempt = 0
+        while not token:
+            attempt += 1
+            try:
+                token = await get_token(key_decoded, username)
+                if token:
+                    logger.info(f"{username}: Lấy token thành công (lần {attempt})")
+                    break
+                else:
+                    logger.warning(f"{username}: Token rỗng, thử lại (lần {attempt})")
+            except Exception as e:
+                logger.warning(f"{username}: Lỗi khi lấy token (lần {attempt}): {str(e)}")
+            await asyncio.sleep(1)
+
+        # Chia sẻ (retry vô hạn đến khi thành công)
+        share_attempt = 0
+        while not success:
+            share_attempt += 1
+            try:
+                success = await share_event_flow(username, token, state)
+                if success:
+                    logger.info(f"{username}: Chia sẻ thành công (lần {share_attempt}), hoàn thành lượt xử lý")
+                    break
+                else:
+                    logger.warning(f"{username}: Chia sẻ thất bại, thử lại (lần {share_attempt})")
+            except Exception as e:
+                logger.warning(f"{username}: Lỗi khi chia sẻ (lần {share_attempt}): {str(e)}")
+            await asyncio.sleep(1)
+
         logger.info(f"Hoàn thành xử lý tài khoản: {username}")
+
 
 async def main():
     """Hàm chính để xử lý tất cả tài khoản."""
