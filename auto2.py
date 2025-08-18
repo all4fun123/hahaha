@@ -58,54 +58,55 @@ async def safe_request(session, method, url, **kwargs):
             await asyncio.sleep(1)
     return None
 
-async def login(session: aiohttp.ClientSession, key, account):
-    """Đăng nhập để lấy token với retry"""
-    try:
-        headers = {
-            'origin': 'https://au.vtc.vn',
-            'referer': 'https://au.vtc.vn',
-            'sec-ch-ua': '"Android WebView";v="123", "Not:A-Brand";v="8", "Chromium";v="123"',
-            'sec-ch-ua-mobile': '?1',
-            'sec-ch-ua-platform': '"Android"',
-            'content-type': 'application/x-www-form-urlencoded',
-            'user-agent': 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36'
-        }
-        
-        # Retry POST request
-        resp = await safe_request(session, "POST", 'https://au.vtc.vn/header/Handler/Process.ashx?act=GetCookieAuthString', data=f'info={quote(key)}', headers=headers)
-        if not resp:
-            logger.warning(f"Thất bại lấy CookieAuthString sau 5 lần thử Zalopay: {account}")
-            return None
-        if resp.status == 200:
-            data = await resp.json()
-            if data['ResponseStatus'] != 1:
-                logger.warning(f'Đăng nhập thất bại: {account}')
+async def login(key, account):
+
+    async with aiohttp.ClientSession() as session:
+        try:
+            headers = {
+                'origin': 'https://au.vtc.vn',
+                'referer': 'https://au.vtc.vn',
+                'sec-ch-ua': '"Android WebView";v="123", "Not:A-Brand";v="8", "Chromium";v="123"',
+                'sec-ch-ua-mobile': '?1',
+                'sec-ch-ua-platform': '"Android"',
+                'content-type': 'application/x-www-form-urlencoded',
+                'user-agent': 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36'
+            }
+            
+            # Retry POST request
+            resp = await safe_request(session, "POST", 'https://au.vtc.vn/header/Handler/Process.ashx?act=GetCookieAuthString', data=f'info={quote(key)}', headers=headers)
+            if not resp:
+                logger.warning(f"Thất bại lấy CookieAuthString sau 5 lần thử Zalopay: {account}")
                 return None
-        else:
-            logger.warning(f'Lỗi đăng nhập {account}: HTTP {resp.status}')
-            return None
-        
-        # Retry GET request
-        resp = await safe_request(session, "GET", 'https://au.vtc.vn', headers=headers)
-        if not resp:
-            logger.warning(f"Thất bại lấy token sau 5 lần thử: {account}")
-            return None
-        if resp.status == 200:
-            data = await resp.text()
-            try:
-                token_value = data.split('\\"tokenValue\\":\\"')[1].split('\\"')[0]
-                logger.info(f"Tài khoản {account}: Đã đăng nhập thành công")
-                return token_value
-            except IndexError:
-                logger.warning(f'Lỗi phân tích token: {account}')
+            if resp.status == 200:
+                data = await resp.json()
+                if data['ResponseStatus'] != 1:
+                    logger.warning(f'Đăng nhập thất bại: {account}')
+                    return None
+            else:
+                logger.warning(f'Lỗi đăng nhập {account}: HTTP {resp.status}')
                 return None
-        else:
-            logger.warning(f'Lỗi lấy token {account}: HTTP {resp.status}')
+            
+            # Retry GET request
+            resp = await safe_request(session, "GET", 'https://au.vtc.vn', headers=headers)
+            if not resp:
+                logger.warning(f"Thất bại lấy token sau 5 lần thử: {account}")
+                return None
+            if resp.status == 200:
+                data = await resp.text()
+                try:
+                    token_value = data.split('\\"tokenValue\\":\\"')[1].split('\\"')[0]
+                    logger.info(f"Tài khoản {account}: Đã đăng nhập thành công")
+                    return token_value
+                except IndexError:
+                    logger.warning(f'Lỗi phân tích token: {account}')
+                    return None
+            else:
+                logger.warning(f'Lỗi lấy token {account}: HTTP {resp.status}')
+                return None
+        
+        except Exception as e:
+            logger.error(f'Lỗi đăng nhập {account}: {e}')
             return None
-    
-    except Exception as e:
-        logger.error(f'Lỗi đăng nhập {account}: {e}')
-        return None
 
 async def run_event_flow(username, key, state):
     timeout = aiohttp.ClientTimeout(total=5.0)
@@ -114,7 +115,7 @@ async def run_event_flow(username, key, state):
         try:
             # Perform login to get token for this account
             if state.is_first_run:
-                token = await login(session, key, username)
+                token = await login(key, username)
                 if not token:
                     logger.error(f"Không thể lấy token cho tài khoản {username}")
                     return False
