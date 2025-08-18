@@ -240,7 +240,7 @@ async def share_event_flow(username: str, bearer_token: str, state: AccountState
                         return None
                     log_id = wish_res.get("code")
                     logger.info(f"{username}: Gửi lời chúc thành công, LogID: {log_id}")
-                    return log_id
+                    return log_id, wish_time
                 except (ClientConnectionError, ServerDisconnectedError, ProxyError) as e:
                     logger.warning(f"{username}: Lỗi mạng khi gửi lời chúc: {str(e)} (thử lần {retry + 1}/{MAX_SESSION_RETRIES})")
                     await asyncio.sleep(RETRY_DELAY)
@@ -250,13 +250,13 @@ async def share_event_flow(username: str, bearer_token: str, state: AccountState
                     await asyncio.sleep(RETRY_DELAY)
                     return await send_wish(session, retry + 1)
 
-            async def perform_share(session: ClientSession, log_id: int, retry: int = 0) -> bool:
+            async def perform_share(session: ClientSession, wish_time, log_id: int, retry: int = 0) -> bool:
                 """Thực hiện hành động chia sẻ bằng LogID."""
                 if retry >= MAX_SESSION_RETRIES:
                     logger.warning(f"{username}: Không chia sẻ được sau {MAX_SESSION_RETRIES} lần thử")
                     return False
 
-                share_time = get_current_timestamp()
+                share_time = wish_time
                 share_raw = f"{share_time}{MAKER_CODE}{AU_URL}{BACKEND_KEY_SIGN}"
                 share_sign = hashlib.sha256(share_raw.encode('utf-8')).hexdigest()
                 share_url = f"{AU_URL}/bsau/api/generate-share-token?username={username}&time={share_time}&sign={share_sign}"
@@ -324,9 +324,9 @@ async def share_event_flow(username: str, bearer_token: str, state: AccountState
                 return False
 
             logger.info(f"{username}: Thực hiện chia sẻ lần {state.share_count + 1}/{MAX_SHARES}")
-            log_id = await send_wish(session)
+            log_id, wish_time = await send_wish(session)
             if log_id:
-                if await perform_share(session, log_id):
+                if await perform_share(session, wish_time, log_id):
                     state.share_count += 1
                     logger.info(f"{username}: Hoàn thành chia sẻ lần {state.share_count}/{MAX_SHARES}")
                     return True
