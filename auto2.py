@@ -12,18 +12,17 @@ from urllib.parse import quote
 import os
 from typing import Optional, List, Tuple
 
-# Cấu hình (nên thay bằng biến môi trường hoặc file cấu hình trong môi trường thực tế)
-CONFIGPROXY = 'http://103.67.199.104:20051/'  # URL proxy, ví dụ: socks5://user:pass@host:port
+# Cấu hình
+CONFIGPROXY = 'http://103.67.199.104:20051/'
 FILE_NAME = 'account.txt'
-TIMEOUT = 10  # giây
+TIMEOUT = 10
 MAX_TOKEN_RETRIES = 20
 MAX_SESSION_RETRIES = 20
-RETRY_DELAY = 1  # giây
+RETRY_DELAY = 1
 API_URL = "https://apiwebevent.vtcgame.vn/besnau19/Event"
 MAKER_CODE = "BEAuSN19"
 BACKEND_KEY_SIGN = "de54c591d457ed1f1769dda0013c9d30f6fc9bbff0b36ea0a425233bd82a1a22"
 AU_URL = "https://au.vtc.vn"
-MAX_SHARES = 30  # Số lần chia sẻ tối đa mỗi tài khoản
 
 # Thiết lập logging
 logging.basicConfig(
@@ -63,7 +62,6 @@ async def get_token(key: str, account: str, retry: int = 0) -> Optional[str]:
 
     async with ClientSession(headers=headers, timeout=ClientTimeout(total=TIMEOUT)) as session:
         try:
-            # Yêu cầu đăng nhập
             async with session.post(
                 'https://au.vtc.vn/header/Handler/Process.ashx?act=GetCookieAuthString',
                 data=f'info={quote(key)}',
@@ -85,7 +83,6 @@ async def get_token(key: str, account: str, retry: int = 0) -> Optional[str]:
                     return await get_token(key, account, retry + 1)
                 logger.info(f"{account}: Đăng nhập thành công")
 
-            # Lấy token từ trang auparty
             async with session.get('https://au.vtc.vn/auparty', ssl=True) as response:
                 if response.status != 200:
                     logger.warning(f"{account}: Không truy cập được trang auparty, mã trạng thái: {response.status} (thử lần {retry + 1}/{MAX_TOKEN_RETRIES})")
@@ -116,7 +113,6 @@ async def share_event_flow(username: str, bearer_token: str, state: AccountState
     connector = ProxyConnector.from_url(CONFIGPROXY) if CONFIGPROXY else None
     async with ClientSession(connector=connector, timeout=ClientTimeout(total=TIMEOUT)) as session:
         try:
-            # Kiểm tra proxy nếu được cấu hình
             if CONFIGPROXY:
                 for retry in range(3):
                     try:
@@ -145,11 +141,9 @@ async def share_event_flow(username: str, bearer_token: str, state: AccountState
                     return False
 
             def get_current_timestamp() -> int:
-                """Lấy thời gian hiện tại theo giây."""
                 return int(time.time())
 
             async def generate_sign(time: int, func: str) -> str:
-                """Tạo chữ ký SHA256 cho yêu cầu API."""
                 raw = f"{time}{MAKER_CODE}{func}{BACKEND_KEY_SIGN}"
                 return hashlib.sha256(raw.encode('utf-8')).hexdigest()
 
@@ -172,7 +166,6 @@ async def share_event_flow(username: str, bearer_token: str, state: AccountState
             }
 
             async def send_wish(session: ClientSession, retry: int = 0) -> Optional[int]:
-                """Gửi lời chúc để lấy LogID."""
                 if retry >= MAX_SESSION_RETRIES:
                     logger.warning(f"{username}: Không gửi được lời chúc sau {MAX_SESSION_RETRIES} lần thử")
                     return None
@@ -251,7 +244,6 @@ async def share_event_flow(username: str, bearer_token: str, state: AccountState
                     return await send_wish(session, retry + 1)
 
             async def perform_share(session: ClientSession, wish_time, log_id: int, retry: int = 0) -> bool:
-                """Thực hiện hành động chia sẻ bằng LogID."""
                 if retry >= MAX_SESSION_RETRIES:
                     logger.warning(f"{username}: Không chia sẻ được sau {MAX_SESSION_RETRIES} lần thử")
                     return False
@@ -319,16 +311,12 @@ async def share_event_flow(username: str, bearer_token: str, state: AccountState
                     return await perform_share(session, wish_time, log_id, retry + 1)
 
             state.account_nick = username
-            if state.share_count >= MAX_SHARES:
-                logger.info(f"{username}: Đã đạt giới hạn chia sẻ ({state.share_count}/{MAX_SHARES})")
-                return False
-
-            logger.info(f"{username}: Thực hiện chia sẻ lần {state.share_count + 1}/{MAX_SHARES}")
+            logger.info(f"{username}: Thực hiện chia sẻ lần {state.share_count + 1}")
             log_id, wish_time = await send_wish(session)
             if log_id:
                 if await perform_share(session, wish_time, log_id):
                     state.share_count += 1
-                    logger.info(f"{username}: Hoàn thành chia sẻ lần {state.share_count}/{MAX_SHARES}")
+                    logger.info(f"{username}: Hoàn thành chia sẻ lần {state.share_count}")
                     return True
                 else:
                     logger.warning(f"{username}: Hành động chia sẻ thất bại")
@@ -361,15 +349,14 @@ async def process_account(session: ClientSession, username: str, key: str, state
                 logger.error(f"{username}: Bỏ qua do không lấy được token")
                 return
 
-            while state.share_count < MAX_SHARES:
+            while True:  # Vòng lặp vô hạn để chia sẻ liên tục
                 success = await share_event_flow(username, token, state)
                 if success:
                     logger.info(f"{username}: Chia sẻ thành công, chờ 3 giây")
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(2)
                 else:
                     logger.warning(f"{username}: Chia sẻ thất bại, thử lại sau 5 giây")
-                    await asyncio.sleep(1)
-            logger.info(f"{username}: Hoàn thành {state.share_count}/{MAX_SHARES} lần chia sẻ")
+                    await asyncio.sleep(2)
 
         except ValueError as e:
             logger.error(f"{username}: Định dạng khóa không hợp lệ: {str(e)}")
@@ -379,28 +366,29 @@ async def process_account(session: ClientSession, username: str, key: str, state
 
 async def main():
     """Hàm chính để xử lý tất cả tài khoản."""
-    accounts = await load_accounts()
-    if not accounts:
-        logger.error("Không tìm thấy tài khoản hợp lệ trong file accounts.txt")
-        return
+    while True:  # Vòng lặp vô hạn để chạy lại toàn bộ tài khoản
+        accounts = await load_accounts()
+        if not accounts:
+            logger.error("Không tìm thấy tài khoản hợp lệ trong file accounts.txt")
+            return
 
-    connector = ProxyConnector.from_url(CONFIGPROXY) if CONFIGPROXY else None
-    async with ClientSession(connector=connector, timeout=ClientTimeout(total=TIMEOUT)) as session:
-        states = {username: AccountState() for username, _ in accounts}
-        semaphore = asyncio.Semaphore(2)  # Giới hạn 5 tài khoản đồng thời
+        connector = ProxyConnector.from_url(CONFIGPROXY) if CONFIGPROXY else None
+        async with ClientSession(connector=connector, timeout=ClientTimeout(total=TIMEOUT)) as session:
+            states = {username: AccountState() for username, _ in accounts}
+            semaphore = asyncio.Semaphore(2)  # Giới hạn 2 tài khoản đồng thời
 
-        # Xử lý tài khoản theo nhóm 5
-        for i in range(0, len(accounts), 2):
-            batch = accounts[i:i+2]
-            logger.info(f"Xử lý nhóm tài khoản từ {i+1} đến {i+len(batch)}")
-            tasks = [
-                process_account(session, username, key, states[username], semaphore)
-                for username, key in batch
-            ]
-            await asyncio.gather(*tasks)
-            logger.info(f"Hoàn thành nhóm tài khoản từ {i+1} đến {i+len(batch)}")
+            for i in range(0, len(accounts), 2):
+                batch = accounts[i:i+2]
+                logger.info(f"Xử lý nhóm tài khoản từ {i+1} đến {i+len(batch)}")
+                tasks = [
+                    process_account(session, username, key, states[username], semaphore)
+                    for username, key in batch
+                ]
+                await asyncio.gather(*tasks)
+                logger.info(f"Hoàn thành nhóm tài khoản từ {i+1} đến {i+len(batch)}")
 
-        logger.info("Đã xử lý xong tất cả tài khoản")
+            logger.info("Đã xử lý xong tất cả tài khoản, bắt đầu lại sau 10 giây")
+            await asyncio.sleep(10)  # Chờ trước khi chạy lại toàn bộ tài khoản
 
 if __name__ == "__main__":
     asyncio.run(main())
