@@ -10,7 +10,8 @@ import logging
 from datetime import datetime
 from pytz import timezone
 from urllib.parse import quote
-
+from aiohttp import ClientSession, ClientTimeout, ClientConnectionError, ServerDisconnectedError
+from aiohttp_socks import ProxyConnector, ProxyType, ProxyError
 
 CONFIGPROXY = "http://103.67.199.104:20051"
 # Force UTF-8 encoding for console output
